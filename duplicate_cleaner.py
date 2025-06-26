@@ -75,27 +75,46 @@ class DuplicateManagerGUI:
         self.title_label.config(text=f"Дублікати: {filename}")
 
         for i, path in enumerate(paths):
+            frame = tk.Frame(self.scroll_frame, padx=10, pady=10)
+
             try:
                 img = Image.open(path)
                 img.thumbnail((250, 250))
                 photo = ImageTk.PhotoImage(img)
-                self.image_refs.append(photo)
+                is_image = True
+            except Exception:
+                try:
+                    file_icon = Image.open("file_icon.png")
+                    file_icon.thumbnail((100, 100))
+                    photo = ImageTk.PhotoImage(file_icon)
+                    is_image = False
+                except Exception as e:
+                    print(f"⚠️ Неможливо завантажити іконку: {e}")
+                    continue
 
-                frame = tk.Frame(self.scroll_frame, padx=10, pady=10)
-                img_label = tk.Label(frame, image=photo, borderwidth=2, relief="solid")
-                img_label.pack()
-                img_label.bind("<Button-1>", lambda e, idx=len(self.paths): self.toggle_selection(idx))
+            self.image_refs.append(photo)
+            img_label = tk.Label(frame, image=photo, borderwidth=2, relief="solid")
+            img_label.pack()
+            img_label.bind("<Button-1>", lambda e, idx=len(self.paths): self.toggle_selection(idx))
 
-                path_label = tk.Label(frame, text=path, wraplength=250, justify="left", font=("Arial", 8))
-                path_label.pack(pady=5)
+            # Основний опис
+            text = path
+            if os.path.exists(path):
+                stat = os.stat(path)
+                size_kb = stat.st_size // 1024
+                modified = os.path.getmtime(path)
+                from datetime import datetime
+                dt = datetime.fromtimestamp(modified).strftime("%Y-%m-%d %H:%M")
+                text += f"\n📦 {size_kb} KB\n🕒 {dt}"
 
-                frame.pack(side="left", padx=5)
+            path_label = tk.Label(frame, text=text, wraplength=250, justify="left", font=("Arial", 8))
+            path_label.pack(pady=5)
 
-                # Додаємо лише після успішного завантаження
-                self.paths.append(path)
+            frame.pack(side="left", padx=5)
 
-            except Exception as e:
-                print(f"⚠️ Неможливо завантажити {path}: {e}")
+            # Додаємо лише після обробки
+            self.paths.append(path)
+
 
         if not self.paths:
             self.title_label.config(text=f"⚠️ Усі файли \"{filename}\" не вдалося завантажити як зображення.")
