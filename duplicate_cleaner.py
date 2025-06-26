@@ -1,7 +1,7 @@
 import os
 from collections import defaultdict
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 
 def find_duplicates(folder_path):
@@ -10,62 +10,137 @@ def find_duplicates(folder_path):
         for file in files:
             filenames[file].append(os.path.join(root, file))
     duplicates = {name: paths for name, paths in filenames.items() if len(paths) > 1}
-    return duplicates
+    return list(duplicates.items())
 
-def show_image(image_path):
-    try:
-        image_window = tk.Toplevel()
-        image_window.title(f"Перегляд: {os.path.basename(image_path)}")
+class DuplicateManagerGUI:
+    def __init__(self, root, duplicates):
+        self.root = root
+        self.root.title("Менеджер дублікатів")
+        self.duplicates = duplicates
+        self.index = 0
+        self.selected = set()
+        self.image_refs = []
+        self.root.minsize(800, 200)
 
-        img = Image.open(image_path)
-        img.thumbnail((600, 600))  # змінити розмір для вікна
-        photo = ImageTk.PhotoImage(img)
+        self.setup_ui()
+        self.display_current_group()
 
-        label = tk.Label(image_window, image=photo)
-        label.image = photo  # зберігаємо посилання
-        label.pack()
-        image_window.mainloop()
-    except Exception as e:
-        print(f"⚠️ Неможливо показати зображення: {e}")
+    def setup_ui(self):
+        # Заголовок
+        self.title_label = tk.Label(self.root, text="", font=("Arial", 16))
+        self.title_label.pack(pady=10)
 
-def show_all_images(image_paths, title="Перегляд дублікатів"):
-    try:
-        preview_window = tk.Toplevel()
-        preview_window.title(title)
+        # Горизонтальний скролінг
+        self.canvas = tk.Canvas(self.root, height=350)
+        self.scroll_frame = tk.Frame(self.canvas)
+        self.scrollbar = tk.Scrollbar(self.root, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(xscrollcommand=self.scrollbar.set)
 
-        # Розрахунок висоти вікна (наприклад, 320 пікселів на 1 фото + запас)
-        img_height = 320
-        total_height = len(image_paths) * img_height
-        max_height = preview_window.winfo_screenheight() - 100  # запас
+        self.canvas.create_window((0, 0), window=self.scroll_frame, anchor="nw")
+        self.scroll_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
 
-        final_height = min(total_height, max_height)
-        preview_window.geometry(f"350x{final_height}")  # ширина x висота
+        self.canvas.pack(fill="both", expand=True)
+        self.scrollbar.pack(fill="x")
 
-        container = tk.Frame(preview_window)
-        container.pack(fill="both", expand=True)
+        # Лічильник вибраних
+        self.counter_label = tk.Label(self.root, text="Вибрано: 0")
+        self.counter_label.pack(pady=(5, 0))
 
-        images = []
+        # Кнопки
+        btn_frame = tk.Frame(self.root)
+        btn_frame.pack(pady=10)
 
-        for path in image_paths:
+        self.delete_button = tk.Button(btn_frame, text="🗑 Видалити вибрані", command=self.delete_selected, state="disabled")
+        self.delete_button.pack(side="left", padx=10)
+
+        self.skip_button = tk.Button(btn_frame, text="⏭ Далі", command=self.next_group)
+        self.skip_button.pack(side="left", padx=10)
+
+    def display_current_group(self):
+        # Очистка
+        for widget in self.scroll_frame.winfo_children():
+            widget.destroy()
+        self.image_refs.clear()
+        self.selected.clear()
+
+        if self.index >= len(self.duplicates):
+            self.title_label.config(text="✅ Усі дублікати опрацьовані.")
+            self.counter_label.config(text="")
+            self.delete_button.config(state="disabled")
+            self.skip_button.config(state="disabled")
+            return
+
+        filename, paths = self.duplicates[self.index]
+        self.paths = []
+        self.title_label.config(text=f"Дублікати: {filename}")
+
+        for i, path in enumerate(paths):
             try:
                 img = Image.open(path)
-                img.thumbnail((300, 300))
+                img.thumbnail((250, 250))
                 photo = ImageTk.PhotoImage(img)
-                images.append(photo)
+                self.image_refs.append(photo)
 
-                frame = tk.Frame(container, padx=10, pady=10)
-                label = tk.Label(frame, image=photo)
-                label.pack()
-                text = tk.Label(frame, text=path, wraplength=280, justify="left")
-                text.pack()
-                frame.pack()
+                frame = tk.Frame(self.scroll_frame, padx=10, pady=10)
+                img_label = tk.Label(frame, image=photo, borderwidth=2, relief="solid")
+                img_label.pack()
+                img_label.bind("<Button-1>", lambda e, idx=len(self.paths): self.toggle_selection(idx))
+
+                path_label = tk.Label(frame, text=path, wraplength=250, justify="left", font=("Arial", 8))
+                path_label.pack(pady=5)
+
+                frame.pack(side="left", padx=5)
+
+                # Додаємо лише після успішного завантаження
+                self.paths.append(path)
+
             except Exception as e:
-                print(f"⚠️ Неможливо відкрити {path}: {e}")
+                print(f"⚠️ Неможливо завантажити {path}: {e}")
 
-        preview_window.images = images
-    except Exception as e:
-        print(f"⚠️ Помилка при відкритті зображень: {e}")
- 
+        if not self.paths:
+            self.title_label.config(text=f"⚠️ Усі файли \"{filename}\" не вдалося завантажити як зображення.")
+            self.skip_button.config(state="normal")
+            self.delete_button.config(state="disabled")
+        else:
+            self.update_counter()
+
+
+    def toggle_selection(self, index):
+        if index in self.selected:
+            self.selected.remove(index)
+        else:
+            self.selected.add(index)
+        self.update_counter()
+
+    def update_counter(self):
+        count = len(self.selected)
+        self.counter_label.config(text=f"Вибрано: {count}")
+        self.delete_button.config(state="normal" if count else "disabled")
+
+        for i, widget in enumerate(self.scroll_frame.winfo_children()):
+            children = widget.winfo_children()
+            if not children:
+                continue
+            label = children[0]
+            if i in self.selected:
+                label.config(borderwidth=4, relief="ridge", bg="lightblue")
+            else:
+                label.config(borderwidth=2, relief="solid", bg="SystemButtonFace")
+
+    def delete_selected(self):
+        to_delete = [self.paths[i] for i in self.selected]
+        for path in to_delete:
+            try:
+                os.remove(path)
+                print(f"🗑 Видалено: {path}")
+            except Exception as e:
+                print(f"⚠️ Не вдалося видалити {path}: {e}")
+        self.index += 1
+        self.display_current_group()
+
+    def next_group(self):
+        self.index += 1
+        self.display_current_group()
 
 def main():
     # Вибір папки
@@ -78,35 +153,15 @@ def main():
         return
 
     duplicates = find_duplicates(folder)
-
     if not duplicates:
-        print("✅ Дублікатів не знайдено.")
+        messagebox.showinfo("Результат", "✅ Дублікатів не знайдено.")
         return
 
-    total_duplicates = sum(len(paths) for paths in duplicates.values())
-    print(f"\n🔁 Знайдено {len(duplicates)} назв з дублями, всього дублікатів: {total_duplicates - len(duplicates)}")
-
-    for filename, paths in duplicates.items():
-        print(f"\n📁 {filename}:")
-        for i, path in enumerate(paths, 1):
-            print(f"  {i}. {path}")
-
-       # показ фото одразу
-        image_paths = [p for p in paths if p.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".gif"))]
-        if image_paths:
-            show_all_images(image_paths, title=f"Зображення: {filename}")
-
-        try:
-            choice = int(input(f"Який з файлів \"{filename}\" видалити? Введіть номер (або 0 щоб пропустити): "))
-            if 1 <= choice <= len(paths):
-                os.remove(paths[choice - 1])
-                print("🗑️ Видалено:", paths[choice - 1])
-            else:
-                print("⏩ Пропущено.")
-        except Exception as e:
-            print("⚠️ Помилка:", e)
-
-    print("\n✅ Додаток завершив роботу! \n\n")
+    print(f"🔁 Знайдено {len(duplicates)} груп дублікатів.")
+    
+    root.deiconify()  
+    app = DuplicateManagerGUI(root, duplicates)
+    root.mainloop()
 
 if __name__ == "__main__":
     main()
